@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+.venv/
+build/
+dist/
+*.egg-info/
+*.parquet
+*.json
+*.png
+*.root
