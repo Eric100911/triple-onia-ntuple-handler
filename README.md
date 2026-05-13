@@ -23,6 +23,28 @@ Use `LCG 109a` for the standard notebook and batch workflow:
 source /cvmfs/sft.cern.ch/lcg/views/LCG_109a/x86_64-el9-gcc13-opt/setup.sh
 ```
 
+Recommended runtime settings for this nested repo:
+
+```bash
+export MPLCONFIGDIR=/tmp/chiw/mplconfig_multileppat_vertex_batch
+export PYTHONPYCACHEPREFIX=/tmp/chiw/pycache_multileppat_vertex_batch
+```
+
+Install the package in editable mode from the repository root:
+
+```bash
+cd /eos/home-c/chiw/JpsiJpsiPhi/CMSSW_15_0_15_JpsiJpsiPhi_refactor/src/HeavyFlavorAnalysis/TPS-Onia2MuMu/test/multileppat_vertex_batch
+python -m pip install --no-deps -e .
+```
+
+Avoid relying on `PYTHONPATH=src` in this environment. In the current `LCG 109a` setup it can interfere with `site-packages` resolution for packages such as `pandas`.
+
+Supported analysis modes:
+
+- `JpsiJpsiPhi`
+- `JpsiJpsiUps`
+- `JpsiUpsPhi`
+
 Standard tree paths:
 
 ```text
@@ -95,7 +117,9 @@ Typical usage:
 ```bash
 cd /eos/home-c/chiw/JpsiJpsiPhi/CMSSW_15_0_15_JpsiJpsiPhi_refactor/src/HeavyFlavorAnalysis/TPS-Onia2MuMu/test/multileppat_vertex_batch
 source /cvmfs/sft.cern.ch/lcg/views/LCG_109a/x86_64-el9-gcc13-opt/setup.sh
-pip install -e . \
+export MPLCONFIGDIR=/tmp/chiw/mplconfig_multileppat_vertex_batch \
+&& export PYTHONPYCACHEPREFIX=/tmp/chiw/pycache_multileppat_vertex_batch \
+&& python -m pip install --no-deps -e . \
 && run-multileppat-vertex-batch \
   --analysis-mode JpsiJpsiPhi \
   '/eos/user/c/chiw/JpsiJpsiPhi/MC_samples/Ntuple_refactor/TPS-JpsiJpsiPhi/JJP_TPS_001.root' \
@@ -107,6 +131,29 @@ pip install -e . \
   --cms-energy 13.6 \
   --cms-lumi 7.98 \
   --cms-era Run2022C
+```
+
+Run-3 data examples:
+
+```bash
+run-multileppat-vertex-batch \
+  --analysis-mode JpsiJpsiUps \
+  --output-dir /tmp/chiw/jpsijpsiups_batch \
+  --fit-backend both \
+  '/eos/user/c/chiw/JpsiJpsiUps/rootNtuple/P_Run20*-refactor_JpsiJpsiUps/*.root'
+```
+
+```bash
+run-multileppat-vertex-batch \
+  --analysis-mode JpsiUpsPhi \
+  --output-dir /tmp/chiw/jpsiupsphi_batch \
+  --fit-backend roofit \
+  --ups-background-order 4 \
+  --cms-caption 'Work In Progress' \
+  --cms-energy 13.6 \
+  --cms-lumi 283.4 \
+  --cms-era 'Run 3 (2022-2025)' \
+  '/eos/user/c/chiw/JpsiUpsPhi/rootNtuple/P_Run20*-JpsiUpsPhi_refactor_14Apr2026/*.root'
 ```
 
 The driver performs up to three stages:
@@ -163,17 +210,17 @@ active_windows = resolve_windows(
     default_mass_windows_from_config_row(config_row),
     {
         "Jpsi_1_mass": offline_cfg.jpsi_mass_window,
-        "Jpsi_2_mass": offline_cfg.jpsi_mass_window,
+        "Ups_mass": offline_cfg.ups_mass_window,
         "Phi_mass": offline_cfg.phi_mass_window,
         "Pri_mass": None,
     },
 )
 mass_cfg = MassStudyConfig(
-    analysis_mode="JpsiJpsiPhi",
+    analysis_mode="JpsiUpsPhi",
     active_windows=active_windows,
     selector_name="all6_same_recVtx",
     selectors=("all6_same_recVtx", "Pri_fitValid"),
-    fit_branches=tuple(FIT_BRANCHES_BY_MODE["JpsiJpsiPhi"]),
+    fit_branches=tuple(FIT_BRANCHES_BY_MODE["JpsiUpsPhi"]),
 )
 
 tables = run_massfit_prep_batch(files, study, offline_cfg, mass_cfg)
@@ -188,10 +235,10 @@ roofit_payload = run_roofit_selector_compare(
 )
 
 plot_style = CmsPlotStyleConfig(
-    caption="Preliminary",
+    caption="Work In Progress",
     energy_tev=13.6,
-    lumi_fb=7.98,
-    era="Run2022C",
+    lumi_fb=283.4,
+    era="Run 3 (2022-2025)",
     is_data=True,
 )
 ```
@@ -235,8 +282,9 @@ These defaults are relied on by the notebooks and downstream studies and should 
 - `all6_same_recVtx` means the mode-specific muon and kaon `vertexId` values are all equal and non-negative.
 - `Pri_fitValid == 1` is the selector for a valid three-body vertex fit in the active analysis mode.
 - The default selector comparison uses `("all6_same_recVtx", "Pri_fitValid")`.
-- Best-candidate ranking is the sum of squared `pt` values for the three fitted objects in the active analysis mode, with tie-breakers `Pri_VtxProb`, `Phi_VtxProb`, and `cand_idx`.
+- Best-candidate ranking is the sum of squared `pt` values for the three fitted objects in the active analysis mode, with mode-aware tie-breakers from `ANALYSIS_MODE_SPECS`.
 - The shared J/psi signal model in both fit backends is `Crystal Ball + Gaussian`.
+- `Ups_mass` is modeled with Gaussian `Υ(1S,2S,3S)` peaks plus a polynomial background of order `1..4`.
 - J/psi parameter locking should go through `resolve_jpsi_pdf_config(...)` and `JPSI_PDF_PRESETS`, not notebook-local ad hoc parameter fixing.
 - CMS-style projection plots should be produced with `mplhep` when fit payloads are non-empty, using run metadata supplied by the driver.
 - Data ntuples should remain valid inputs without GEN branches; MC truth is enabled from `X_config`, not by notebook-local assumptions.

@@ -4,15 +4,17 @@ Date: 2026-04-10
 
 ## Summary
 
-This document records the current integrated state of the `multileppat_vertex_batch` package after the selection, fitting, and notebook refactor work carried out for the `JpsiJpsiPhi` mass-study workflow.
+This document records the current integrated state of the `multileppat_vertex_batch` package after the selection, fitting, and notebook refactor work carried out for the Run-3 `JpsiJpsiPhi`, `JpsiJpsiUps`, and `JpsiUpsPhi` mass-study workflows.
 
 The package now provides:
 
-- a vectorized candidate-selection path for ntuple-based `JpsiJpsiPhi` mass studies
+- a vectorized candidate-selection path for ntuple-based `JpsiJpsiPhi`, `JpsiJpsiUps`, and `JpsiUpsPhi` mass studies
 - a common event-best candidate selection strategy
 - a standard active-mass-window audit
 - selector-by-selector fit comparison for both RooFit and `iminuit`
 - a unified J/psi PDF configuration layer, including parameter locking presets
+- Gaussian `Υ(1S,2S,3S)` modeling with adjustable polynomial Upsilon backgrounds up to 4th order
+- CMS-style `mplhep` projection plots and selector-local fit-input ROOT exports
 
 The mass-study notebooks
 [study_mass_spectra_roofit_run2023d.ipynb](/eos/home-c/chiw/JpsiJpsiPhi/CMSSW_15_0_15_JpsiJpsiPhi_refactor/src/HeavyFlavorAnalysis/TPS-Onia2MuMu/doc/study_mass_spectra_roofit_run2023d.ipynb)
@@ -27,6 +29,21 @@ Use `LCG 109a` as the default environment:
 ```bash
 source /cvmfs/sft.cern.ch/lcg/views/LCG_109a/x86_64-el9-gcc13-opt/setup.sh
 ```
+
+For local runs in the nested repository, also set:
+
+```bash
+export MPLCONFIGDIR=/tmp/chiw/mplconfig_multileppat_vertex_batch
+export PYTHONPYCACHEPREFIX=/tmp/chiw/pycache_multileppat_vertex_batch
+```
+
+Install from the nested repository root with:
+
+```bash
+python -m pip install --no-deps -e .
+```
+
+Avoid `PYTHONPATH=src` in this environment. Editable install is the supported bootstrap path.
 
 The standard trees for these ntuple studies are:
 
@@ -64,6 +81,7 @@ Defined in
 
 `MassStudyConfig` is the runtime bridge between selection and fit stages. The main fields are:
 
+- `analysis_mode`
 - `active_windows`
 - `selector_name`
 - `selectors`
@@ -95,17 +113,13 @@ The canonical selector comparison in the notebooks uses:
 SELECTORS = ("all6_same_recVtx", "Pri_fitValid")
 ```
 
-The best-candidate ranking is fixed to:
+The best-candidate ranking is fixed to the active mode’s three fitted objects:
 
 ```text
-Jpsi_1_pt^2 + Jpsi_2_pt^2 + Phi_pt^2
+sum(pt_i^2)
 ```
 
-with tie-breakers:
-
-- `Pri_VtxProb`
-- `Phi_VtxProb`
-- `cand_idx`
+with mode-aware tie-breakers taken from `ANALYSIS_MODE_SPECS`.
 
 ### Pipeline
 
@@ -162,6 +176,9 @@ Both selector-compare helpers return a per-selector summary table with at least:
 - `fit_status`
 - `N_sss`
 - `N_sss_err`
+- `ups_2s_significance_sigma`
+- `ups_3s_significance_sigma`
+- `ups_excited_significance_sigma`
 
 The RooFit compare table also carries `covQual`.
 
@@ -201,7 +218,7 @@ JPSI2_PDF_CONFIG = resolve_jpsi_pdf_config(
 
 ## Notebook Usage Contract
 
-The two Run2023D mass-study notebooks should now be treated as thin frontends.
+The mass-study notebooks should now be treated as thin frontends for all supported analysis modes.
 
 They are expected to:
 
@@ -258,6 +275,32 @@ RooFit selector comparison on that file:
   - `N_sss_err ≈ 4.923`
   - `fit_status = 1`
   - `covQual = 2`
+
+## Added Run-3 Analysis Channels
+
+The integrated package now supports these `--analysis-mode` values:
+
+- `JpsiJpsiPhi`
+- `JpsiJpsiUps`
+- `JpsiUpsPhi`
+
+Mode-specific behavior is defined in:
+
+- [src/multileppat_vertex_batch/schema.py](../src/multileppat_vertex_batch/schema.py)
+
+This includes:
+
+- `fit_branches`
+- best-candidate ranking branches
+- mode-specific tie-breakers
+- same-vertex slot definitions
+- truth-leg topology definitions
+
+For the Upsilon modes:
+
+- `Ups_mass` is modeled with Gaussian `Υ(1S,2S,3S)` peaks
+- the Upsilon background is a polynomial of order `1..4`
+- the fit payloads include `Ups_2S`, `Ups_3S`, and combined excited-state significance estimates
 
 iminuit selector comparison on that file:
 
