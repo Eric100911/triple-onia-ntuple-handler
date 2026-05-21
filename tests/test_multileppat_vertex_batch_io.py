@@ -13,6 +13,7 @@ from multileppat_vertex_batch.cache import (
     stage_cache_matches,
     write_mass_selection_bundle,
 )
+from multileppat_vertex_batch.cli_condor import _write_dag, _write_submit_file, _write_worker_script, worker_efficiency_merge, worker_mass_merge
 from multileppat_vertex_batch.config import OfflineSelectionConfig
 from multileppat_vertex_batch.efficiency import (
     EfficiencyBinning,
@@ -31,6 +32,7 @@ from multileppat_vertex_batch.fit_roofit import (
     ups_signal_yields,
 )
 from multileppat_vertex_batch.io import read_json, resolve_input_files, stable_data_hash, write_root_trees
+from multileppat_vertex_batch.io import write_json, write_parquet
 from multileppat_vertex_batch.selection import select_best_candidates
 from multileppat_vertex_batch.schema import MASS_SELECTION_CACHE_VERSION, get_analysis_mode_spec
 from multileppat_vertex_batch.truth import build_file_records, first_ancestor_idx
@@ -214,6 +216,183 @@ class CacheHelpersTest(unittest.TestCase):
                 {"selector_name": "Pri_fitValid"},
             )
             self.assertIsNone(loaded)
+
+
+class CondorHelpersTest(unittest.TestCase):
+    def test_condor_dag_records_one_file_jobs_and_merge_dependency(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="multileppat_condor_", dir="/tmp/chiw") as tmp_dir:
+            condor_dir = Path(tmp_dir)
+            worker = _write_worker_script(condor_dir, Path.cwd())
+            submit_file = _write_submit_file(condor_dir, worker)
+            dag_path = _write_dag(
+                condor_dir,
+                submit_file,
+                [
+                    {"job": "mass_file_000000", "cmd": "worker-mass-file", "args_json": str(condor_dir / "args" / "a.json")},
+                    {"job": "mass_file_000001", "cmd": "worker-mass-file", "args_json": str(condor_dir / "args" / "b.json")},
+                    {"job": "mass_merge", "cmd": "worker-mass-merge", "args_json": str(condor_dir / "args" / "merge.json")},
+                ],
+                [(["mass_file_000000", "mass_file_000001"], "mass_merge")],
+            )
+
+            dag = dag_path.read_text(encoding="utf-8")
+            self.assertIn("JOB mass_file_000000 multileppat.sub", dag)
+            self.assertIn("cmd=\"worker-mass-file\"", dag)
+            self.assertIn("PARENT mass_file_000000 mass_file_000001 CHILD mass_merge", dag)
+            self.assertTrue(worker.exists())
+            self.assertIn("executable =", submit_file.read_text(encoding="utf-8"))
+
+    def test_efficiency_merge_recomputes_counts_and_summary(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="multileppat_eff_merge_", dir="/tmp/chiw") as tmp_dir:
+            root = Path(tmp_dir)
+            final_dir = root / "final"
+            job_dir = root / "jobs" / "sample" / "file_000000"
+            gen_df = pd.DataFrame(
+                {
+                    "sample": ["sample"],
+                    "source_file": ["input.root"],
+                    "entry": [0],
+                    "run": [1],
+                    "lumi": [2],
+                    "event": [3],
+                    "jpsi_lead_pt": [8.0],
+                    "jpsi_lead_abs_y": [0.1],
+                    "jpsi_sublead_pt": [7.0],
+                    "jpsi_sublead_abs_y": [0.2],
+                    "phi_pt": [5.0],
+                    "phi_abs_y": [0.3],
+                    "triple_pt": [20.0],
+                    "triple_abs_y": [0.4],
+                    "triple_mass": [7.2],
+                }
+            )
+            event_df = pd.DataFrame(
+                {
+                    "sample": ["sample"],
+                    "source_file": ["input.root"],
+                    "entry": [0],
+                    "run": [1],
+                    "lumi": [2],
+                    "event": [3],
+                    "full_gen": [True],
+                    "fiducial_acceptance": [True],
+                    "hlt_muon_matched": [True],
+                    "single_jpsi_reco": [True],
+                    "double_jpsi_reco": [True],
+                    "single_phi_reco": [True],
+                    "triple_gen_matched_candidate": [True],
+                    "jpsi_quality": [True],
+                    "phi_quality": [True],
+                    "all6_same_recVtx": [True],
+                    "Pri_fitValid": [True],
+                    "Pri_fitPass": [True],
+                    "Pri_assocPVPass": [True],
+                    "Pri_trackPVPass": [True],
+                    "final_nominal": [True],
+                }
+            )
+            write_parquet(gen_df, job_dir / "gen_systems.parquet")
+            write_parquet(event_df, job_dir / "event_step_flags.parquet")
+            args_path = root / "args.json"
+            write_json(
+                {
+                    "output_dir": str(root / "merge"),
+                    "final_output_dir": str(final_dir),
+                    "samples": ["sample"],
+                    "files_by_sample": {"sample": ["input.root"]},
+                    "sample_file_output_dirs": {"sample": [str(job_dir)]},
+                    "write_merged_parquets": True,
+                },
+                args_path,
+            )
+
+            worker_efficiency_merge(args_path)
+
+            summary = pd.read_parquet(final_dir / "subprocess_summary.parquet")
+            self.assertEqual(summary["n_full_gen"].tolist(), [1])
+            self.assertEqual(summary["n_final_nominal"].tolist(), [1])
+            counts = pd.read_parquet(final_dir / "sample" / "efficiency_counts.parquet")
+            inclusive = counts.loc[(counts["map_type"] == "inclusive") & (counts["step"] == "final_nominal")]
+            self.assertEqual(inclusive["passed"].tolist(), [1])
+            self.assertTrue((final_dir / "merged_gen_systems.parquet").exists())
+            self.assertTrue((final_dir / "merged_event_step_flags.parquet").exists())
+
+    def test_mass_merge_recomputes_global_best_candidate(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="multileppat_mass_merge_", dir="/tmp/chiw") as tmp_dir:
+            root = Path(tmp_dir)
+            final_dir = root / "final"
+            input_file = root / "input.root"
+            input_file.write_text("", encoding="utf-8")
+            job_a = root / "jobs" / "mass_file_000000"
+            job_b = root / "jobs" / "mass_file_000001"
+            columns = [
+                "selector",
+                "source_file",
+                "run",
+                "lumi",
+                "event",
+                "cand_idx",
+                "triple_pt2_sum",
+                "Jpsi_1_mass",
+                "Jpsi_2_mass",
+                "Phi_mass",
+            ]
+            write_parquet(
+                pd.DataFrame(
+                    [
+                        ["all6_same_recVtx", "a.root", 1, 1, 10, 0, 10.0, 3.1, 3.1, 1.02],
+                        ["all6_same_recVtx", "a.root", 1, 1, 10, 1, 40.0, 3.1, 3.1, 1.02],
+                    ],
+                    columns=columns,
+                ),
+                job_a / "selection" / "candidate_pool_df.parquet",
+            )
+            write_parquet(
+                pd.DataFrame([["all6_same_recVtx", "b.root", 1, 1, 11, 0, 20.0, 3.1, 3.1, 1.02]], columns=columns),
+                job_b / "selection" / "candidate_pool_df.parquet",
+            )
+            audit = pd.DataFrame(
+                [
+                    ["all", "initial_candidates", 2],
+                    ["all", "initial_candidates_in_active_windows", 2],
+                    ["all6_same_recVtx", "selector_candidates", 2],
+                    ["all6_same_recVtx", "selector_candidates_in_active_windows", 2],
+                    ["all6_same_recVtx", "selector_candidates_after_full_offline", 2],
+                ],
+                columns=["selector", "stage", "count"],
+            )
+            write_parquet(audit, job_a / "selection" / "audit_df.parquet")
+            write_parquet(audit.iloc[:0], job_b / "selection" / "audit_df.parquet")
+            args_path = root / "mass_args.json"
+            write_json(
+                {
+                    "analysis_mode": "JpsiJpsiPhi",
+                    "tree_path": "mkcands/X_data",
+                    "config_tree_path": "mkcands/X_config",
+                    "cache_dir": str(final_dir / "truth_cache"),
+                    "input_files": [str(input_file)],
+                    "offline_selection": OfflineSelectionConfig().__dict__,
+                    "active_windows": {"Jpsi_1_mass": [2.9, 3.3], "Jpsi_2_mass": [2.9, 3.3], "Phi_mass": [0.99, 1.07]},
+                    "selector_name": "all6_same_recVtx",
+                    "selectors": ["all6_same_recVtx"],
+                    "fit_branches": ["Jpsi_1_mass", "Jpsi_2_mass", "Phi_mass"],
+                    "truth_enabled": False,
+                    "output_dir": str(root / "merge"),
+                    "final_output_dir": str(final_dir),
+                    "file_output_dirs": [str(job_a), str(job_b)],
+                    "write_merged_parquets": True,
+                },
+                args_path,
+            )
+
+            worker_mass_merge(args_path)
+
+            selected = pd.read_parquet(final_dir / "mass_selection" / "selected_candidate_df.parquet")
+            self.assertEqual(selected["cand_idx"].tolist(), [1, 0])
+            self.assertTrue((final_dir / "mass_selection" / "fit_input_candidates.root").exists())
+            self.assertTrue((final_dir / "merged_candidate_pool.parquet").exists())
+            self.assertTrue((final_dir / "merged_selected_candidates.parquet").exists())
+            self.assertTrue((final_dir / "merged_fit_input.parquet").exists())
 
 
 class SignificanceHelpersTest(unittest.TestCase):

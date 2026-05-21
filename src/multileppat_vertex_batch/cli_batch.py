@@ -240,6 +240,7 @@ def run_roofit_stage(
     output_dir: Path,
     plot_style_cfg: CmsPlotStyleConfig,
     mass_selection_cache_key: str,
+    write_plots: bool = True,
 ) -> dict[str, Any]:
     import ROOT
 
@@ -268,7 +269,7 @@ def run_roofit_stage(
             "phi_background_kind": phi_background_kind,
             "ups_background_order": ups_background_order,
         },
-        plot_style_cfg=plot_style_cfg,
+        plot_style_cfg=plot_style_cfg if write_plots else None,
         cache_version=FIT_COMPARE_CACHE_VERSIONS["roofit"],
         cache_payload=build_fit_compare_cache_payload(
             analysis_mode=study_cfg.analysis_mode,
@@ -293,6 +294,7 @@ def run_iminuit_stage(
     output_dir: Path,
     plot_style_cfg: CmsPlotStyleConfig,
     mass_selection_cache_key: str,
+    write_plots: bool = True,
 ) -> dict[str, Any]:
     from iminuit import Minuit
 
@@ -317,7 +319,7 @@ def run_iminuit_stage(
             "jpsi_pdf_preset": jpsi_pdf_preset,
             "ups_background_order": ups_background_order,
         },
-        plot_style_cfg=plot_style_cfg,
+        plot_style_cfg=plot_style_cfg if write_plots else None,
         cache_version=FIT_COMPARE_CACHE_VERSIONS["iminuit"],
         cache_payload=build_fit_compare_cache_payload(
             analysis_mode=study_cfg.analysis_mode,

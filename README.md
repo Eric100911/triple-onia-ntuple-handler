@@ -185,6 +185,32 @@ The driver performs up to three stages:
    - writes per-selector fit summaries and yields
    - writes CMS-style `projection_*.png` plots beside each selector summary
 
+## HTCondor One-File Jobs
+
+For large ntuple campaigns, use `run-multileppat-condor` to generate a DAG with one ROOT file per processing job and merge/reduce jobs before plotting. By default the command only writes the Condor files; add `--submit` to call `condor_submit_dag`.
+
+```bash
+run-multileppat-condor mass \
+  --analysis-mode JpsiJpsiPhi \
+  --output-dir /tmp/chiw/jjp_mass_condor_out \
+  --condor-dir /tmp/chiw/jjp_mass_condor_work \
+  --fit-backend both \
+  --write-merged-parquets \
+  '/eos/user/c/chiw/JpsiJpsiPhi/MC_samples/Ntuple_refactor/TPS-JpsiJpsiPhi/*.root'
+```
+
+The mass DAG runs file-local truth/selection jobs, then a merge job that recomputes global best-candidate selection and writes the standard `mass_selection/` bundle. Fits run after the merge and skip projection plots on Condor.
+
+```bash
+run-multileppat-condor efficiency \
+  --output-dir /tmp/chiw/jjp_eff_condor_out \
+  --condor-dir /tmp/chiw/jjp_eff_condor_work \
+  --samples JJP_DPS1,JJP_DPS2_CS,JJP_DPS2_G,JJP_SPS_CS,JJP_SPS_G \
+  --write-merged-parquets
+```
+
+`--write-merged-parquets` adds top-level merged row tables for downstream analysis. The standard per-stage bundles are always written.
+
 ## Acceptance and Efficiency Workflow
 
 The dedicated efficiency driver is [src/multileppat_vertex_batch/cli_efficiency.py](./src/multileppat_vertex_batch/cli_efficiency.py), exposed after editable install as:
