@@ -7,11 +7,13 @@ It replaces notebook-local selection code with a shared workflow that:
 - reads `mkcands/X_data` and `mkcands/X_config` from MultiLepPAT ntuples
 - auto-detects from `X_config` whether GEN/truth enrichment is available
 - builds truth-labeled candidate and event tables when GEN branches exist
+- computes MC acceptance and efficiency maps for `JpsiJpsiPhi` from full-GEN event denominators
 - applies vectorized offline selection for `JpsiJpsiPhi`, `JpsiJpsiUps`, and `JpsiUpsPhi`
 - picks one best candidate per event with a fixed ranking
 - prepares fit frames and compares selectors with RooFit and/or `iminuit`
 - models `Ups_mass` with Gaussian `Υ(1S,2S,3S)` peaks plus an adjustable polynomial background of order `1` through `4`
 - writes CMS-style fit projection plots with `mplhep`
+- writes CMS-style efficiency maps with binomial uncertainties
 - exports selector-specific fit-input candidates to a ROOT file for downstream work
 - writes reproducible Parquet/JSON/ROOT output bundles with manifests
 
@@ -87,6 +89,12 @@ Public imports are re-exported from [src/multileppat_vertex_batch/__init__.py](.
   - `run_iminuit_selector_compare(...)`
   - `resolve_jpsi_pdf_config(...)`
   - `JPSI_PDF_PRESETS`
+- Acceptance and efficiency:
+  - `find_jpsijpsiphi_gen_system(...)`
+  - `run_efficiency_for_sample(...)`
+  - `build_efficiency_counts(...)`
+  - `build_subprocess_envelope(...)`
+  - `clopper_pearson_interval(...)`
 - Output writers:
   - `write_run_metadata(...)`
   - `write_truth_cache_bundle(...)`
@@ -101,11 +109,13 @@ Public imports are re-exported from [src/multileppat_vertex_batch/__init__.py](.
 - [src/multileppat_vertex_batch/truth.py](./src/multileppat_vertex_batch/truth.py): truth matching, classifier construction, candidate/event row building
 - [src/multileppat_vertex_batch/selection.py](./src/multileppat_vertex_batch/selection.py): vectorized offline selection, selector masks, best-candidate choice, audits
 - [src/multileppat_vertex_batch/pipeline.py](./src/multileppat_vertex_batch/pipeline.py): end-to-end batch orchestration and selector comparison
+- [src/multileppat_vertex_batch/efficiency.py](./src/multileppat_vertex_batch/efficiency.py): `JpsiJpsiPhi` full-GEN acceptance and efficiency maps
 - [src/multileppat_vertex_batch/fit_roofit.py](./src/multileppat_vertex_batch/fit_roofit.py): RooFit 3D mode-aware fit layer and shared J/psi PDF config
 - [src/multileppat_vertex_batch/fit_iminuit.py](./src/multileppat_vertex_batch/fit_iminuit.py): `iminuit` implementation aligned to the RooFit signal model
 - [src/multileppat_vertex_batch/cache.py](./src/multileppat_vertex_batch/cache.py): reproducible output bundles and manifests
 - [src/multileppat_vertex_batch/audit.py](./src/multileppat_vertex_batch/audit.py): per-candidate drill-down tables for failure investigation
 - [src/multileppat_vertex_batch/cli_truth_cache.py](./src/multileppat_vertex_batch/cli_truth_cache.py): minimal cache-builder CLI for quick truth/cache inspection
+- [src/multileppat_vertex_batch/cli_efficiency.py](./src/multileppat_vertex_batch/cli_efficiency.py): batch acceptance and efficiency CLI
 - [src/multileppat_vertex_batch/examples.py](./src/multileppat_vertex_batch/examples.py): helper utilities for choosing representative candidates
 
 ## Canonical Workflow
@@ -174,6 +184,69 @@ The driver performs up to three stages:
    - for `JpsiJpsiUps` and `JpsiUpsPhi`, fits `Ups_mass` with Gaussian `Υ(1S,2S,3S)` components and a polynomial background of order `1..4`
    - writes per-selector fit summaries and yields
    - writes CMS-style `projection_*.png` plots beside each selector summary
+
+## Acceptance and Efficiency Workflow
+
+The dedicated efficiency driver is [src/multileppat_vertex_batch/cli_efficiency.py](./src/multileppat_vertex_batch/cli_efficiency.py), exposed after editable install as:
+
+```bash
+run-multileppat-efficiency
+```
+
+The first supported mode is `JpsiJpsiPhi`. The denominator is the number of ntuple entries with a full generated `J/psi + J/psi + phi` system, where the generated decay topology contains two distinct `J/psi -> mu+mu-` resonances and one `phi -> K+K-`. This is intended for MC ntuples written with `RequireAcceptedCandidatesForMonteCarloTree=False`, so entries without reconstructed candidates remain in the denominator.
+
+Typical full-sample usage with the IHEP XRootD layout:
+
+```bash
+run-multileppat-efficiency \
+  --analysis-mode JpsiJpsiPhi \
+  --xrootd-host root://cceos.ihep.ac.cn// \
+  --sample-root /eos/ihep/cms/store/user/xcheng/MC_Production_v3/output \
+  --samples JJP_DPS1,JJP_DPS2_CS,JJP_DPS2_G,JJP_SPS_CS,JJP_SPS_G \
+  --output-dir /tmp/chiw/jjp_efficiency_v1
+```
+
+Single-file smoke-test form:
+
+```bash
+run-multileppat-efficiency \
+  --analysis-mode JpsiJpsiPhi \
+  --input-files root://cceos.ihep.ac.cn///eos/ihep/cms/store/user/xcheng/MC_Production_v3/output/JJP_DPS1/0/output_ntuple.root \
+  --sample-name JJP_DPS1_smoke \
+  --output-dir /tmp/chiw/jjp_eff_smoke
+```
+
+The nominal cutflow is cumulative:
+
+```text
+full_gen
+fiducial_acceptance
+hlt_muon_matched
+single_jpsi_reco
+double_jpsi_reco
+single_phi_reco
+triple_gen_matched_candidate
+jpsi_quality
+phi_quality
+all6_same_recVtx
+Pri_fitValid
+Pri_fitPass
+Pri_assocPVPass
+Pri_trackPVPass
+final_nominal
+```
+
+The HLT step uses candidate-level stored J/psi muon trigger or filter matching. Event-path `TrigNames`/`TrigRes` OR information is kept as a diagnostic column, not the nominal HLT numerator.
+
+Efficiency tables include `passed`, `total`, `efficiency`, `err_low`, `err_high`, and `err_sym` for every bin. The uncertainties are binomial Clopper-Pearson intervals at 68.27% confidence. CMS-style plots are produced with `mplhep`; each efficiency heatmap is paired with an uncertainty heatmap, and readable bins are annotated with efficiency, symmetric uncertainty, and `passed/total`.
+
+The primary correlated maps store counts in:
+
+```text
+pT(Jpsi_lead) x pT(Jpsi_sublead) x pT(phi)
+```
+
+and render `pT(Jpsi_lead)` vs `pT(Jpsi_sublead)` heatmaps split by `pT(phi)` bins. The two generated J/psi objects are ordered by generated pT as `jpsi_lead` and `jpsi_sublead`.
 
 ## Minimal Python Usage
 
@@ -275,6 +348,20 @@ Fit-comparison stage:
 - RooFit-only `phi_debug_values.json` when present
 - stage and per-selector `manifest.json`
 
+Efficiency stage:
+
+- per-sample `sample_manifest.json`
+- per-sample `gen_systems.parquet`
+- per-sample `event_step_flags.parquet`
+- per-sample `efficiency_counts.parquet`
+- per-sample `efficiency_maps.parquet`
+- per-sample `cutflow.csv`
+- per-sample CMS-style `plots/*.png`
+- top-level `subprocess_summary.parquet` and `subprocess_summary.csv`
+- top-level `subprocess_envelope.parquet`
+- top-level `run_metadata.json`
+- top-level and per-sample `manifest.json`
+
 ## Behavioral Contract
 
 These defaults are relied on by the notebooks and downstream studies and should not change silently:
@@ -287,10 +374,13 @@ These defaults are relied on by the notebooks and downstream studies and should 
 - `Ups_mass` is modeled with Gaussian `Υ(1S,2S,3S)` peaks plus a polynomial background of order `1..4`.
 - J/psi parameter locking should go through `resolve_jpsi_pdf_config(...)` and `JPSI_PDF_PRESETS`, not notebook-local ad hoc parameter fixing.
 - CMS-style projection plots should be produced with `mplhep` when fit payloads are non-empty, using run metadata supplied by the driver.
+- CMS-style efficiency plots should include uncertainty information, either as readable bin annotations or as paired uncertainty panels.
+- Efficiency subprocess comparisons are unweighted unless a later analysis explicitly supplies a cross-section model; the package writes an envelope across subprocesses by default.
 - Data ntuples should remain valid inputs without GEN branches; MC truth is enabled from `X_config`, not by notebook-local assumptions.
 - Notebook code should call package entry points rather than re-implement vectorized selection, event-best ranking, or selector-comparison logic inline.
 
 ## Related Files
 
 - Package integration notes: [docs/integration.md](./docs/integration.md)
+- Acceptance and efficiency notes: [docs/efficiency.md](./docs/efficiency.md)
 - Reference batch driver: [src/multileppat_vertex_batch/cli_batch.py](./src/multileppat_vertex_batch/cli_batch.py)

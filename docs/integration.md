@@ -1,10 +1,10 @@
 # `multileppat_vertex_batch` Integration Status and Interface Notes
 
-Date: 2026-04-10
+Date: 2026-05-21
 
 ## Summary
 
-This document records the current integrated state of the `multileppat_vertex_batch` package after the selection, fitting, and notebook refactor work carried out for the Run-3 `JpsiJpsiPhi`, `JpsiJpsiUps`, and `JpsiUpsPhi` mass-study workflows.
+This document records the current integrated state of the `multileppat_vertex_batch` package after the selection, fitting, efficiency, and notebook refactor work carried out for the Run-3 `JpsiJpsiPhi`, `JpsiJpsiUps`, and `JpsiUpsPhi` studies.
 
 The package now provides:
 
@@ -15,6 +15,8 @@ The package now provides:
 - a unified J/psi PDF configuration layer, including parameter locking presets
 - Gaussian `Υ(1S,2S,3S)` modeling with adjustable polynomial Upsilon backgrounds up to 4th order
 - CMS-style `mplhep` projection plots and selector-local fit-input ROOT exports
+- a `JpsiJpsiPhi` acceptance and efficiency workflow based on full-GEN event denominators
+- CMS-style efficiency maps with Clopper-Pearson uncertainty information
 
 The mass-study notebooks
 [study_mass_spectra_roofit_run2023d.ipynb](/eos/home-c/chiw/JpsiJpsiPhi/CMSSW_15_0_15_JpsiJpsiPhi_refactor/src/HeavyFlavorAnalysis/TPS-Onia2MuMu/doc/study_mass_spectra_roofit_run2023d.ipynb)
@@ -145,6 +147,73 @@ Defined in
 - `window_audit_df`
 - `selection_summary_df`
 
+### Acceptance and Efficiency
+
+Defined in
+[src/multileppat_vertex_batch/efficiency.py](../src/multileppat_vertex_batch/efficiency.py):
+
+- `EfficiencyBinning`
+- `EfficiencyRunConfig`
+- `find_jpsijpsiphi_gen_system(...)`
+- `run_efficiency_for_sample(...)`
+- `build_efficiency_counts(...)`
+- `build_cutflow(...)`
+- `build_subprocess_envelope(...)`
+- `clopper_pearson_interval(...)`
+- `discover_xrootd_sample_files(...)`
+
+The first implemented efficiency mode is `JpsiJpsiPhi`. The denominator is the number of ntuple entries with a full generated `J/psi + J/psi + phi` system, and the numerator is the number of full-GEN events with at least one GEN-matched reconstructed candidate passing the requested step.
+
+The standard driver is:
+
+```bash
+run-multileppat-efficiency
+```
+
+Typical IHEP XRootD usage:
+
+```bash
+run-multileppat-efficiency \
+  --analysis-mode JpsiJpsiPhi \
+  --xrootd-host root://cceos.ihep.ac.cn// \
+  --sample-root /eos/ihep/cms/store/user/xcheng/MC_Production_v3/output \
+  --samples JJP_DPS1,JJP_DPS2_CS,JJP_DPS2_G,JJP_SPS_CS,JJP_SPS_G \
+  --output-dir /tmp/chiw/jjp_efficiency_v1
+```
+
+The nominal cumulative cutflow is:
+
+```text
+full_gen
+fiducial_acceptance
+hlt_muon_matched
+single_jpsi_reco
+double_jpsi_reco
+single_phi_reco
+triple_gen_matched_candidate
+jpsi_quality
+phi_quality
+all6_same_recVtx
+Pri_fitValid
+Pri_fitPass
+Pri_assocPVPass
+Pri_trackPVPass
+final_nominal
+```
+
+Efficiency outputs store `passed`, `total`, `efficiency`, `err_low`, `err_high`, and `err_sym` in every bin. The uncertainty interval is Clopper-Pearson at 68.27% confidence. CMS-style plots use paired panels: efficiency on the left and symmetric uncertainty on the right.
+
+The correlated HLT and vertexing maps are stored in:
+
+```text
+pT(jpsi_lead) x pT(jpsi_sublead) x pT(phi)
+```
+
+and rendered as `pT(jpsi_lead)` vs `pT(jpsi_sublead)` heatmaps in separate `pT(phi)` slices. The generated J/psi objects are ordered by generated pT.
+
+Detailed usage and output contracts are in
+[docs/efficiency.md](efficiency.md).
+
 ### Fit Backends
 
 Defined in:
@@ -237,6 +306,7 @@ They should not:
 - re-implement vectorized muon or kaon selection
 - re-implement event-best ranking
 - re-implement selector-by-selector audit logic
+- re-implement acceptance or efficiency map construction when package-level outputs are available
 
 ## Verified Single-File Smoke-Test Results
 
