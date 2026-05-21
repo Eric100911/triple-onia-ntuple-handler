@@ -22,6 +22,7 @@ dependencies = [
 [project.scripts]
 run-multileppat-vertex-batch = "multileppat_vertex_batch.cli_batch:main"
 run-multileppat-truth-cache = "multileppat_vertex_batch.cli_truth_cache:main"
+run-multileppat-efficiency = "multileppat_vertex_batch.cli_efficiency:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}

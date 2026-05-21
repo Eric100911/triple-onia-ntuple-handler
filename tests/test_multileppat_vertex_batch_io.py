@@ -13,6 +13,15 @@ from multileppat_vertex_batch.cache import (
     stage_cache_matches,
     write_mass_selection_bundle,
 )
+from multileppat_vertex_batch.config import OfflineSelectionConfig
+from multileppat_vertex_batch.efficiency import (
+    EfficiencyBinning,
+    build_cutflow,
+    build_efficiency_counts,
+    build_event_efficiency_row,
+    clopper_pearson_interval,
+    find_jpsijpsiphi_gen_system,
+)
 from multileppat_vertex_batch.fit_iminuit import minuit_parameter_table
 from multileppat_vertex_batch.fit_roofit import (
     build_ups_peak_significance_table,
@@ -398,6 +407,118 @@ class TruthHelpersTest(unittest.TestCase):
         self.assertEqual(candidate_rows[0]["mu5_idx"], 4)
         self.assertEqual(candidate_rows[0]["mu6_idx"], 5)
         self.assertEqual(event_rows[0]["has_truth_triple_strict"], 1)
+
+
+class EfficiencyHelpersTest(unittest.TestCase):
+    def _jpsijpsiphi_event(self) -> dict:
+        return {
+            "evtNum": 101,
+            "runNum": 1,
+            "lumiNum": 2,
+            "TrigNames": ["HLT_DoubleMu4_3_LowMass_v1"],
+            "TrigRes": [1],
+            "MC_GenPart_pdgId": [443, 443, 333, 13, -13, 13, -13, 321, -321],
+            "MC_GenPart_motherGenIdx": [-1, -1, -1, 0, 0, 1, 1, 2, 2],
+            "MC_GenPart_pt": [18.0, 11.0, 7.0, 5.0, 5.2, 4.5, 4.8, 2.4, 2.5],
+            "MC_GenPart_eta": [0.3, -0.4, 0.2, 0.1, -0.1, 0.2, -0.2, 0.3, -0.3],
+            "MC_GenPart_phi": [0.0, 1.0, 2.0, 0.1, -0.1, 1.1, 0.9, 2.1, 1.9],
+            "MC_GenPart_mass": [3.096, 3.096, 1.019, 0.105, 0.105, 0.105, 0.105, 0.494, 0.494],
+            "Jpsi_1_mass": [3.09],
+            "Jpsi_1_pt": [18.0],
+            "Jpsi_1_px": [18.0],
+            "Jpsi_1_py": [0.0],
+            "Jpsi_1_pz": [0.0],
+            "Jpsi_1_VtxProb": [0.2],
+            "Jpsi_1_mu_1_Idx": [0],
+            "Jpsi_1_mu_2_Idx": [1],
+            "Jpsi_2_mass": [3.10],
+            "Jpsi_2_pt": [11.0],
+            "Jpsi_2_px": [11.0],
+            "Jpsi_2_py": [0.0],
+            "Jpsi_2_pz": [0.0],
+            "Jpsi_2_VtxProb": [0.3],
+            "Jpsi_2_mu_1_Idx": [2],
+            "Jpsi_2_mu_2_Idx": [3],
+            "Phi_mass": [1.019],
+            "Phi_pt": [7.0],
+            "Phi_px": [7.0],
+            "Phi_py": [0.0],
+            "Phi_pz": [0.0],
+            "Phi_VtxProb": [0.4],
+            "Phi_K_1_Idx": [0],
+            "Phi_K_2_Idx": [1],
+            "Phi_K_1_pt": [2.4],
+            "Phi_K_1_eta": [0.3],
+            "Phi_K_1_vertexId": [9],
+            "Phi_K_1_genMatchIdx": [7],
+            "Phi_K_2_pt": [2.5],
+            "Phi_K_2_eta": [-0.3],
+            "Phi_K_2_vertexId": [9],
+            "Phi_K_2_genMatchIdx": [8],
+            "muGenMatchIdx": [3, 4, 5, 6],
+            "muVertexId": [9, 9, 9, 9],
+            "muIsJpsiTrigMatch": [1, 1, 0, 0],
+            "muIsJpsiFilterMatch": [1, 1, 0, 0],
+            "Pri_fitValid": [1],
+            "Pri_fitPass": [1],
+            "Pri_assocPVPass": [1],
+            "Pri_trackPVPass": [1],
+            "Pri_passAny": [1],
+        }
+
+    def test_find_jpsijpsiphi_gen_system_orders_jpsis_by_pt(self) -> None:
+        system = find_jpsijpsiphi_gen_system(self._jpsijpsiphi_event())
+
+        assert system is not None
+        self.assertEqual(system.jpsi_lead.idx, 0)
+        self.assertEqual(system.jpsi_sublead.idx, 1)
+        self.assertEqual(system.phi.idx, 2)
+        self.assertGreater(system.triple_mass, 0.0)
+
+    def test_build_event_efficiency_row_sets_cumulative_flags(self) -> None:
+        gen_row, event_row = build_event_efficiency_row(
+            self._jpsijpsiphi_event(),
+            "sample.root",
+            "JJP_TEST",
+            0,
+            OfflineSelectionConfig(),
+        )
+
+        assert gen_row is not None
+        assert event_row is not None
+        self.assertEqual(event_row["full_gen"], 1)
+        self.assertEqual(event_row["fiducial_acceptance"], 1)
+        self.assertEqual(event_row["hlt_muon_matched"], 1)
+        self.assertEqual(event_row["all6_same_recVtx"], 1)
+        self.assertEqual(event_row["final_nominal"], 1)
+        self.assertEqual(gen_row["jpsi_lead_gen_idx"], 0)
+
+    def test_clopper_pearson_interval_handles_edges(self) -> None:
+        low, high = clopper_pearson_interval(10, 0)
+        self.assertEqual(low, 0.0)
+        self.assertGreater(high, 0.0)
+        low, high = clopper_pearson_interval(10, 10)
+        self.assertLess(low, 1.0)
+        self.assertEqual(high, 1.0)
+
+    def test_build_efficiency_counts_includes_uncertainties_and_correlated_maps(self) -> None:
+        gen_row, event_row = build_event_efficiency_row(
+            self._jpsijpsiphi_event(),
+            "sample.root",
+            "JJP_TEST",
+            0,
+            OfflineSelectionConfig(),
+        )
+        gen_df = pd.DataFrame([gen_row])
+        event_df = pd.DataFrame([event_row])
+
+        counts = build_efficiency_counts(gen_df, event_df, EfficiencyBinning())
+        cutflow = build_cutflow(event_df)
+
+        self.assertIn("err_low", counts.columns)
+        self.assertIn("err_high", counts.columns)
+        self.assertTrue((counts["map_type"] == "correlated_3d").any())
+        self.assertAlmostEqual(cutflow.loc[cutflow["step"] == "final_nominal", "efficiency"].iloc[0], 1.0)
 
 
 class ParameterTableHelpersTest(unittest.TestCase):

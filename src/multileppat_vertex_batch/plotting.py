@@ -333,3 +333,125 @@ def plot_phi_vtxprob_scan(scan_df: pd.DataFrame, chosen_cut: float):
     axes[1].set_title("How much extra background is removed?")
     plt.tight_layout()
     plt.show()
+
+
+def _efficiency_matrix(frame: pd.DataFrame, value_col: str) -> tuple[np.ndarray, list[str], list[str]]:
+    if frame.empty:
+        return np.empty((0, 0)), [], []
+    x_bins = sorted(int(value) for value in frame["x_bin"].dropna().unique())
+    y_bins = sorted(int(value) for value in frame["y_bin"].dropna().unique())
+    matrix = np.full((len(y_bins), len(x_bins)), np.nan)
+    for _, row in frame.iterrows():
+        if pd.isna(row.get("x_bin")) or pd.isna(row.get("y_bin")):
+            continue
+        ix = x_bins.index(int(row["x_bin"]))
+        iy = y_bins.index(int(row["y_bin"]))
+        if int(row.get("total", 0)) > 0:
+            matrix[iy, ix] = float(row[value_col])
+    x_labels = [
+        str(frame.loc[frame["x_bin"] == idx, "x_label"].dropna().iloc[0])
+        if not frame.loc[frame["x_bin"] == idx, "x_label"].dropna().empty
+        else str(idx)
+        for idx in x_bins
+    ]
+    y_labels = [
+        str(frame.loc[frame["y_bin"] == idx, "y_label"].dropna().iloc[0])
+        if not frame.loc[frame["y_bin"] == idx, "y_label"].dropna().empty
+        else str(idx)
+        for idx in y_bins
+    ]
+    return matrix, x_labels, y_labels
+
+
+def _annotate_efficiency_bins(ax, frame: pd.DataFrame, max_cells: int = 64) -> None:
+    if frame.empty or frame.shape[0] > max_cells:
+        return
+    x_bins = sorted(int(value) for value in frame["x_bin"].dropna().unique())
+    y_bins = sorted(int(value) for value in frame["y_bin"].dropna().unique())
+    for _, row in frame.iterrows():
+        total = int(row.get("total", 0))
+        if total <= 0 or pd.isna(row.get("x_bin")) or pd.isna(row.get("y_bin")):
+            continue
+        ix = x_bins.index(int(row["x_bin"]))
+        iy = y_bins.index(int(row["y_bin"]))
+        text = f"{float(row['efficiency']):.2f}\n+/-{float(row['err_sym']):.2f}\n{int(row['passed'])}/{total}"
+        ax.text(ix, iy, text, ha="center", va="center", fontsize=7, color="black")
+
+
+def save_efficiency_heatmap_pair(
+    output_path: Path,
+    frame: pd.DataFrame,
+    title: str,
+    xlabel: str,
+    ylabel: str,
+    plot_style_cfg: CmsPlotStyleConfig,
+    min_total: int = 1,
+) -> Path:
+    hep = _require_mplhep()
+    hep.style.use("CMS")
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    frame = frame.copy()
+    frame.loc[frame["total"] < int(min_total), ["efficiency", "err_sym"]] = np.nan
+    eff, x_labels, y_labels = _efficiency_matrix(frame, "efficiency")
+    err, _, _ = _efficiency_matrix(frame, "err_sym")
+
+    fig, axes = plt.subplots(1, 2, figsize=(13.2, 5.4), constrained_layout=True)
+    for ax, matrix, panel_title, zlabel in (
+        (axes[0], eff, "Efficiency", "Efficiency"),
+        (axes[1], err, "Uncertainty", "Sym. CP uncertainty"),
+    ):
+        im = ax.imshow(matrix, origin="lower", aspect="auto", vmin=0.0, vmax=1.0, cmap="viridis")
+        ax.set_xticks(np.arange(len(x_labels)))
+        ax.set_xticklabels(x_labels, rotation=45, ha="right")
+        ax.set_yticks(np.arange(len(y_labels)))
+        ax.set_yticklabels(y_labels)
+        ax.set_xlabel(xlabel)
+        ax.set_ylabel(ylabel)
+        ax.set_title(panel_title)
+        fig.colorbar(im, ax=ax, label=zlabel)
+    _annotate_efficiency_bins(axes[0], frame)
+    fig.suptitle(title)
+    apply_cms_label(axes[0], plot_style_cfg)
+    fig.savefig(output_path, dpi=170)
+    plt.close(fig)
+    return output_path
+
+
+def write_efficiency_plots(
+    output_dir: Path,
+    counts_df: pd.DataFrame,
+    plot_style_cfg: CmsPlotStyleConfig,
+    min_total: int = 1,
+) -> dict[str, Path]:
+    if counts_df.empty:
+        return {}
+    output_dir.mkdir(parents=True, exist_ok=True)
+    written: dict[str, Path] = {}
+
+    object_df = counts_df.loc[counts_df["map_type"] == "object_2d"].copy()
+    for (obj, step), frame in object_df.groupby(["object", "step"], dropna=False):
+        path = output_dir / f"object2d_{obj}_{step}.png"
+        written[f"object2d.{obj}.{step}"] = save_efficiency_heatmap_pair(
+            path,
+            frame,
+            title=f"{obj} {step}",
+            xlabel=r"$p_{\mathrm{T}}$ [GeV]",
+            ylabel=r"$|y|$",
+            plot_style_cfg=plot_style_cfg,
+            min_total=min_total,
+        )
+
+    corr_df = counts_df.loc[counts_df["map_type"] == "correlated_3d"].copy()
+    for (step, z_bin), frame in corr_df.groupby(["step", "z_bin"], dropna=False):
+        z_label = str(frame["z_label"].dropna().iloc[0]) if not frame["z_label"].dropna().empty else str(z_bin)
+        path = output_dir / f"corr3d_{step}_phiPt_{z_bin}.png"
+        written[f"corr3d.{step}.{z_bin}"] = save_efficiency_heatmap_pair(
+            path,
+            frame,
+            title=rf"{step}, $p_{{T}}(\phi)$ = {z_label} GeV",
+            xlabel=r"$p_{\mathrm{T}}(J/\psi_{\mathrm{lead}})$ [GeV]",
+            ylabel=r"$p_{\mathrm{T}}(J/\psi_{\mathrm{sublead}})$ [GeV]",
+            plot_style_cfg=plot_style_cfg,
+            min_total=min_total,
+        )
+    return written

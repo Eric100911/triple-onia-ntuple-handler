@@ -18,6 +18,17 @@ from .fit_roofit import (
     resolve_jpsi_pdf_config,
     run_roofit_3d_jpsijpsiphi,
 )
+from .efficiency import (
+    EfficiencyBinning,
+    EfficiencyRunConfig,
+    build_cutflow,
+    build_efficiency_counts,
+    build_subprocess_envelope,
+    clopper_pearson_interval,
+    discover_xrootd_sample_files,
+    find_jpsijpsiphi_gen_system,
+    run_efficiency_for_sample,
+)
 from .io import find_missing_tree_branches, resolve_input_files, resolve_study_input_files
 from .pipeline import (
     load_or_build_cache,
@@ -64,4 +75,13 @@ __all__ = [
     "run_roofit_selector_compare",
     "run_iminuit_selector_compare",
     "validate_config_consistency",
+    "EfficiencyBinning",
+    "EfficiencyRunConfig",
+    "find_jpsijpsiphi_gen_system",
+    "clopper_pearson_interval",
+    "build_cutflow",
+    "build_efficiency_counts",
+    "build_subprocess_envelope",
+    "discover_xrootd_sample_files",
+    "run_efficiency_for_sample",
 ]
