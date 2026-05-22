@@ -28,7 +28,7 @@ def natural_sample_sort_key(path: Path) -> tuple[Any, ...]:
 
 
 def discover_ntuple_files(glob_pattern: str) -> list[Path]:
-    paths = [Path(item) for item in glob(glob_pattern)]
+    paths = [Path(item) for item in glob(glob_pattern, recursive=True)]
     return sorted(paths, key=natural_sample_sort_key)
 
 

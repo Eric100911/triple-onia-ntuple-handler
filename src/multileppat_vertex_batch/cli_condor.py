@@ -63,6 +63,10 @@ def _parse_csv(raw: str) -> tuple[str, ...]:
     return tuple(item.strip() for item in raw.split(",") if item.strip())
 
 
+def _progress(message: str) -> None:
+    print(f"[condor] {message}", flush=True)
+
+
 def _job_name(prefix: str, index: int) -> str:
     return f"{prefix}_{index:06d}"
 
@@ -403,10 +407,13 @@ def worker_efficiency_merge(args_json: Path) -> None:
 
 
 def _build_mass_plan(args: argparse.Namespace, condor_dir: Path, repo_dir: Path) -> Path:
+    _progress("resolving mass-study input files")
     files = resolve_input_files(args.input_files)
+    _progress(f"resolved {len(files)} input files")
     final_output_dir = ensure_dir(Path(args.output_dir))
     selectors = parse_selectors(args.selectors)
     probe_config = StudyConfig(input_files=tuple(str(path) for path in files), show_file_progress=False, progress_backend="terminal")
+    _progress("inspecting X_config and truth-branch availability")
     inspection = inspect_inputs(files, probe_config)
     if inspection["analysis_mode"] != args.analysis_mode:
         raise RuntimeError(f"--analysis-mode {args.analysis_mode} does not match X_config AnalysisMode {inspection['analysis_mode']}.")
@@ -436,7 +443,9 @@ def _build_mass_plan(args: argparse.Namespace, condor_dir: Path, repo_dir: Path)
         is_data=not is_mc,
     )
     truth_enabled = bool(is_mc and not args.skip_truth)
+    _progress(f"analysis_mode={analysis_mode}, is_mc={int(is_mc)}, truth_enabled={int(truth_enabled)}")
 
+    _progress(f"writing run metadata to {final_output_dir}")
     write_run_metadata(
         final_output_dir,
         {
@@ -477,6 +486,7 @@ def _build_mass_plan(args: argparse.Namespace, condor_dir: Path, repo_dir: Path)
         "truth_enabled": truth_enabled,
         "write_merged_parquets": bool(args.write_merged_parquets),
     }
+    _progress(f"writing {len(files)} one-file mass jobs")
     for index, path in enumerate(files):
         job = _job_name("mass_file", index)
         job_dir = file_root / job
@@ -484,8 +494,11 @@ def _build_mass_plan(args: argparse.Namespace, condor_dir: Path, repo_dir: Path)
         arg_path = _write_arg_json(args_dir, job, {**common_payload, "input_file": str(path), "output_dir": str(job_dir)})
         jobs.append({"job": job, "cmd": "worker-mass-file", "args_json": str(arg_path)})
         file_job_names.append(job)
+        if (index + 1) % 100 == 0 or index + 1 == len(files):
+            _progress(f"prepared {index + 1}/{len(files)} mass file jobs")
 
     merge_job = "mass_merge"
+    _progress("writing mass merge job")
     merge_arg = _write_arg_json(
         args_dir,
         merge_job,
@@ -495,6 +508,7 @@ def _build_mass_plan(args: argparse.Namespace, condor_dir: Path, repo_dir: Path)
     parents: list[tuple[list[str], str]] = [(file_job_names, merge_job)]
 
     if args.fit_backend in ("roofit", "both"):
+        _progress("writing RooFit reduce job")
         job = "fit_roofit"
         arg_path = _write_arg_json(
             args_dir,
@@ -513,6 +527,7 @@ def _build_mass_plan(args: argparse.Namespace, condor_dir: Path, repo_dir: Path)
         jobs.append({"job": job, "cmd": "worker-fit-reduce", "args_json": str(arg_path)})
         parents.append(([merge_job], job))
     if args.fit_backend in ("iminuit", "both"):
+        _progress("writing iminuit reduce job")
         job = "fit_iminuit"
         arg_path = _write_arg_json(
             args_dir,
@@ -533,11 +548,13 @@ def _build_mass_plan(args: argparse.Namespace, condor_dir: Path, repo_dir: Path)
 
     worker_script = _write_worker_script(condor_dir, repo_dir)
     submit_file = _write_submit_file(condor_dir, worker_script)
+    _progress(f"writing DAG with {len(jobs)} jobs")
     return _write_dag(condor_dir, submit_file, jobs, parents)
 
 
 def _build_efficiency_plan(args: argparse.Namespace, condor_dir: Path, repo_dir: Path) -> Path:
     final_output_dir = ensure_dir(Path(args.output_dir))
+    _progress("building efficiency Condor plan")
     run_cfg = EfficiencyRunConfig(
         analysis_mode=args.analysis_mode,
         tree_path=args.tree_path,
@@ -549,8 +566,10 @@ def _build_efficiency_plan(args: argparse.Namespace, condor_dir: Path, repo_dir:
     )
     offline_cfg = OfflineSelectionConfig()
     if args.input_files:
+        _progress(f"using {len(args.input_files)} explicit input files for sample {args.sample_name}")
         files_by_sample = {args.sample_name: list(args.input_files)}
     else:
+        _progress(f"discovering XRootD sample files under {run_cfg.sample_root}")
         files_by_sample = discover_xrootd_sample_files(
             host=run_cfg.xrootd_host,
             sample_root=run_cfg.sample_root,
@@ -558,6 +577,11 @@ def _build_efficiency_plan(args: argparse.Namespace, condor_dir: Path, repo_dir:
             max_files=run_cfg.max_files,
         )
     files_by_sample = {sample: files for sample, files in files_by_sample.items() if files}
+    total_files = sum(len(files) for files in files_by_sample.values())
+    _progress(f"resolved {total_files} files across {len(files_by_sample)} samples")
+    for sample, files in files_by_sample.items():
+        _progress(f"sample {sample}: {len(files)} files")
+    _progress(f"writing run metadata to {final_output_dir}")
     write_json(
         {
             "analysis_mode": run_cfg.analysis_mode,
@@ -579,8 +603,10 @@ def _build_efficiency_plan(args: argparse.Namespace, condor_dir: Path, repo_dir:
     jobs: list[dict[str, str]] = []
     file_job_names: list[str] = []
     sample_file_output_dirs: dict[str, list[str]] = {}
+    prepared = 0
     for sample, files in files_by_sample.items():
         sample_file_output_dirs[sample] = []
+        _progress(f"writing one-file jobs for sample {sample}")
         for index, input_file in enumerate(files):
             job = f"eff_{_safe_job_token(sample)}_{index:06d}"
             job_dir = job_root / sample / f"file_{index:06d}"
@@ -598,8 +624,12 @@ def _build_efficiency_plan(args: argparse.Namespace, condor_dir: Path, repo_dir:
             )
             jobs.append({"job": job, "cmd": "worker-efficiency-file", "args_json": str(arg_path)})
             file_job_names.append(job)
+            prepared += 1
+            if prepared % 100 == 0 or prepared == total_files:
+                _progress(f"prepared {prepared}/{total_files} efficiency file jobs")
 
     merge_job = "efficiency_merge"
+    _progress("writing efficiency merge job")
     merge_arg = _write_arg_json(
         args_dir,
         merge_job,
@@ -615,6 +645,7 @@ def _build_efficiency_plan(args: argparse.Namespace, condor_dir: Path, repo_dir:
     jobs.append({"job": merge_job, "cmd": "worker-efficiency-merge", "args_json": str(merge_arg)})
     worker_script = _write_worker_script(condor_dir, repo_dir)
     submit_file = _write_submit_file(condor_dir, worker_script)
+    _progress(f"writing DAG with {len(jobs)} jobs")
     return _write_dag(condor_dir, submit_file, jobs, [(file_job_names, merge_job)])
 
 
@@ -692,6 +723,7 @@ def main() -> None:
     print(f"Wrote Condor DAG: {dag_path}")
     print(f"Submit command: condor_submit_dag {dag_path}")
     if args.submit:
+        _progress("submitting DAG")
         subprocess.run(["condor_submit_dag", str(dag_path)], check=True)
 
 
