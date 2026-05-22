@@ -211,6 +211,27 @@ run-multileppat-condor efficiency \
 
 `--write-merged-parquets` adds top-level merged row tables for downstream analysis. The standard per-stage bundles are always written.
 
+To reuse a previously discovered XRootD file list, pass a JSON sample manifest instead of rediscovering remote directories:
+
+```json
+{
+  "JJP_DPS1": ["root://cceos.ihep.ac.cn///eos/ihep/cms/store/user/xcheng/MC_Production_v3/output/JJP_DPS1/0/output_ntuple.root"],
+  "JJP_SPS_G": ["root://cceos.ihep.ac.cn///eos/ihep/cms/store/user/xcheng/MC_Production_v3/output/JJP_SPS_G/0/output_ntuple.root"]
+}
+```
+
+```bash
+run-multileppat-condor efficiency \
+  --output-dir /tmp/chiw/jjp_eff_condor_out \
+  --condor-dir /tmp/chiw/jjp_eff_condor_work \
+  --input-file-manifest jjp_efficiency_files.json \
+  --samples JJP_DPS1,JJP_SPS_G \
+  --max-files 10 \
+  --write-merged-parquets
+```
+
+With a manifest, `--samples` filters the manifest keys when provided and `--max-files` limits files per sample.
+
 ## Acceptance and Efficiency Workflow
 
 The dedicated efficiency driver is [src/multileppat_vertex_batch/cli_efficiency.py](./src/multileppat_vertex_batch/cli_efficiency.py), exposed after editable install as:
@@ -240,6 +261,17 @@ run-multileppat-efficiency \
   --input-files root://cceos.ihep.ac.cn///eos/ihep/cms/store/user/xcheng/MC_Production_v3/output/JJP_DPS1/0/output_ntuple.root \
   --sample-name JJP_DPS1_smoke \
   --output-dir /tmp/chiw/jjp_eff_smoke
+```
+
+Manifest-backed local processing uses the same JSON shape as the Condor planner:
+
+```bash
+run-multileppat-efficiency \
+  --analysis-mode JpsiJpsiPhi \
+  --input-file-manifest jjp_efficiency_files.json \
+  --samples JJP_DPS1,JJP_SPS_G \
+  --max-files 10 \
+  --output-dir /tmp/chiw/jjp_efficiency_manifest_smoke
 ```
 
 The nominal cutflow is cumulative:

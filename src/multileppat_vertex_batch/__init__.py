@@ -27,6 +27,7 @@ from .efficiency import (
     clopper_pearson_interval,
     discover_xrootd_sample_files,
     find_jpsijpsiphi_gen_system,
+    load_efficiency_file_manifest,
     run_efficiency_for_sample,
 )
 from .io import find_missing_tree_branches, resolve_input_files, resolve_study_input_files
@@ -83,5 +84,6 @@ __all__ = [
     "build_efficiency_counts",
     "build_subprocess_envelope",
     "discover_xrootd_sample_files",
+    "load_efficiency_file_manifest",
     "run_efficiency_for_sample",
 ]

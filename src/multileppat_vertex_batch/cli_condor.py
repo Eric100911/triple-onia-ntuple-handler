@@ -35,6 +35,7 @@ from multileppat_vertex_batch.efficiency import (
     build_efficiency_counts,
     build_subprocess_envelope,
     discover_xrootd_sample_files,
+    load_efficiency_file_manifest,
     process_efficiency_file,
 )
 from multileppat_vertex_batch.fit_roofit import JPSI_PDF_PRESETS, build_fit_frame, build_fit_mask
@@ -555,20 +556,33 @@ def _build_mass_plan(args: argparse.Namespace, condor_dir: Path, repo_dir: Path)
 def _build_efficiency_plan(args: argparse.Namespace, condor_dir: Path, repo_dir: Path) -> Path:
     final_output_dir = ensure_dir(Path(args.output_dir))
     _progress("building efficiency Condor plan")
+    samples_filter = _parse_csv(args.samples) if args.samples is not None else None
+    run_samples = samples_filter if samples_filter is not None else EfficiencyRunConfig().samples
     run_cfg = EfficiencyRunConfig(
         analysis_mode=args.analysis_mode,
         tree_path=args.tree_path,
         xrootd_host=args.xrootd_host,
         sample_root=args.sample_root,
-        samples=_parse_csv(args.samples),
+        samples=run_samples,
         max_files=args.max_files,
         min_plot_total=args.min_plot_total,
     )
     offline_cfg = OfflineSelectionConfig()
-    if args.input_files:
+    if args.input_files is not None and args.input_file_manifest:
+        raise ValueError("--input-files and --input-file-manifest are mutually exclusive.")
+    if args.input_files is not None and not args.input_files:
+        raise ValueError("--input-files requires at least one file.")
+
+    if args.input_files is not None:
+        input_source = "explicit"
         _progress(f"using {len(args.input_files)} explicit input files for sample {args.sample_name}")
         files_by_sample = {args.sample_name: list(args.input_files)}
+    elif args.input_file_manifest:
+        input_source = "manifest"
+        _progress(f"loading input file manifest {args.input_file_manifest}")
+        files_by_sample = load_efficiency_file_manifest(args.input_file_manifest, samples=samples_filter, max_files=run_cfg.max_files)
     else:
+        input_source = "xrootd_discovery"
         _progress(f"discovering XRootD sample files under {run_cfg.sample_root}")
         files_by_sample = discover_xrootd_sample_files(
             host=run_cfg.xrootd_host,
@@ -589,8 +603,11 @@ def _build_efficiency_plan(args: argparse.Namespace, condor_dir: Path, repo_dir:
             "xrootd_host": run_cfg.xrootd_host,
             "sample_root": run_cfg.sample_root,
             "samples": list(files_by_sample),
+            "requested_samples": list(samples_filter or run_cfg.samples),
             "max_files": run_cfg.max_files,
             "min_plot_total": run_cfg.min_plot_total,
+            "input_source": input_source,
+            "input_file_manifest": str(args.input_file_manifest) if args.input_file_manifest else None,
             "offline_selection": offline_cfg.__dict__,
             "cms_plot_style": CmsPlotStyleConfig(caption=args.cms_caption, energy_tev=args.cms_energy, lumi_fb=args.cms_lumi, era=args.cms_era, is_data=False).__dict__,
             "condor_dir": str(condor_dir),
@@ -677,10 +694,11 @@ def build_parser() -> argparse.ArgumentParser:
     eff.add_argument("--output-dir", required=True)
     eff.add_argument("--condor-dir", required=True)
     eff.add_argument("--input-files", nargs="*", default=None)
+    eff.add_argument("--input-file-manifest", default=None, help="JSON object mapping sample names to input ROOT files or XRootD URLs.")
     eff.add_argument("--sample-name", default="explicit")
     eff.add_argument("--xrootd-host", default="root://cceos.ihep.ac.cn//")
     eff.add_argument("--sample-root", default="/eos/ihep/cms/store/user/xcheng/MC_Production_v3/output")
-    eff.add_argument("--samples", default="JJP_DPS1,JJP_DPS2_CS,JJP_DPS2_G,JJP_SPS_CS,JJP_SPS_G")
+    eff.add_argument("--samples", default=None, help="Comma-separated samples for XRootD discovery, or a manifest filter when --input-file-manifest is used.")
     eff.add_argument("--max-files", type=int, default=None)
     eff.add_argument("--tree-path", default="mkcands/X_data")
     eff.add_argument("--min-plot-total", type=int, default=1)

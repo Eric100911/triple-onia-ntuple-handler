@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import math
 import subprocess
 from dataclasses import dataclass
@@ -153,6 +154,56 @@ def xrootd_url(host: str, remote_path: str) -> str:
     return f"{host.rstrip('/')}//{remote_path}"
 
 
+def _limit_efficiency_files(files: list[str], max_files: int | None) -> list[str]:
+    if max_files is None:
+        return files
+    return files[:max_files]
+
+
+def load_efficiency_file_manifest(
+    path: str | Path,
+    *,
+    samples: tuple[str, ...] | None = None,
+    max_files: int | None = None,
+) -> dict[str, list[str]]:
+    manifest_path = Path(path)
+    try:
+        payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"Input file manifest is not valid JSON: {manifest_path}") from exc
+
+    if not isinstance(payload, dict):
+        raise ValueError("Input file manifest must be a JSON object mapping sample names to file lists.")
+
+    requested = tuple(samples or ())
+    sample_names = requested if requested else tuple(str(sample) for sample in payload)
+    files_by_sample: dict[str, list[str]] = {}
+    missing_samples: list[str] = []
+    for sample in sample_names:
+        if not sample:
+            raise ValueError("Input file manifest sample names must be non-empty strings.")
+        if sample not in payload:
+            missing_samples.append(sample)
+            continue
+        raw_files = payload[sample]
+        if not isinstance(raw_files, list):
+            raise ValueError(f"Input file manifest entry for sample {sample!r} must be a list of file strings.")
+        files: list[str] = []
+        for index, item in enumerate(raw_files):
+            if not isinstance(item, str) or not item:
+                raise ValueError(f"Input file manifest entry {sample}[{index}] must be a non-empty file string.")
+            files.append(item)
+        if not files:
+            raise ValueError(f"Input file manifest entry for sample {sample!r} must contain at least one file.")
+        files_by_sample[sample] = _limit_efficiency_files(files, max_files)
+
+    if missing_samples:
+        available = ", ".join(str(sample) for sample in payload) or "(none)"
+        missing = ", ".join(missing_samples)
+        raise ValueError(f"Input file manifest is missing requested sample(s): {missing}. Available samples: {available}")
+    return files_by_sample
+
+
 def xrdfs_ls(host: str, remote_path: str, dirs_only: bool = False) -> list[str]:
     cmd = ["xrdfs", host, "ls"]
     if dirs_only:
@@ -179,7 +230,7 @@ def discover_xrootd_sample_files(
             ntuples = [entry for entry in entries if entry.endswith("/output_ntuple.root")]
             files.extend(xrootd_url(host, path) for path in ntuples)
             if max_files is not None and len(files) >= max_files:
-                files = files[:max_files]
+                files = _limit_efficiency_files(files, max_files)
                 break
         discovered[sample] = files
     return discovered

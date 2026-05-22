@@ -12,13 +12,14 @@ from multileppat_vertex_batch.efficiency import (
     EfficiencyRunConfig,
     build_subprocess_envelope,
     discover_xrootd_sample_files,
+    load_efficiency_file_manifest,
     run_efficiency_for_sample,
 )
 from multileppat_vertex_batch.io import ensure_dir, write_json, write_parquet
 from multileppat_vertex_batch.plotting import write_efficiency_plots
 
 
-def parse_args() -> argparse.Namespace:
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
             "Compute acceptance and efficiency maps for MultiLepPAT MC ntuples. "
@@ -28,10 +29,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--analysis-mode", default="JpsiJpsiPhi", choices=("JpsiJpsiPhi",))
     parser.add_argument("--output-dir", required=True)
     parser.add_argument("--input-files", nargs="*", default=None, help="Explicit input ntuple ROOT files or XRootD URLs.")
+    parser.add_argument("--input-file-manifest", default=None, help="JSON object mapping sample names to input ROOT files or XRootD URLs.")
     parser.add_argument("--sample-name", default="explicit", help="Sample label used with --input-files.")
     parser.add_argument("--xrootd-host", default="root://cceos.ihep.ac.cn//")
     parser.add_argument("--sample-root", default="/eos/ihep/cms/store/user/xcheng/MC_Production_v3/output")
-    parser.add_argument("--samples", default="JJP_DPS1,JJP_DPS2_CS,JJP_DPS2_G,JJP_SPS_CS,JJP_SPS_G")
+    parser.add_argument("--samples", default=None, help="Comma-separated samples for XRootD discovery, or a manifest filter when --input-file-manifest is used.")
     parser.add_argument("--max-files", type=int, default=None)
     parser.add_argument("--tree-path", default="mkcands/X_data")
     parser.add_argument("--min-plot-total", type=int, default=1)
@@ -40,7 +42,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--cms-energy", type=float, default=13.6)
     parser.add_argument("--cms-lumi", type=float, default=None)
     parser.add_argument("--cms-era", default="Run 3")
-    return parser.parse_args()
+    return parser.parse_args(argv)
 
 
 def _parse_csv(raw: str) -> tuple[str, ...]:
@@ -96,12 +98,14 @@ def _write_sample_bundle(
 def main() -> None:
     args = parse_args()
     output_dir = ensure_dir(Path(args.output_dir))
+    samples_filter = _parse_csv(args.samples) if args.samples is not None else None
+    run_samples = samples_filter if samples_filter is not None else EfficiencyRunConfig().samples
     run_cfg = EfficiencyRunConfig(
         analysis_mode=args.analysis_mode,
         tree_path=args.tree_path,
         xrootd_host=args.xrootd_host,
         sample_root=args.sample_root,
-        samples=_parse_csv(args.samples),
+        samples=run_samples,
         max_files=args.max_files,
         min_plot_total=args.min_plot_total,
     )
@@ -114,9 +118,20 @@ def main() -> None:
         is_data=False,
     )
 
-    if args.input_files:
+    if args.input_files is not None and args.input_file_manifest:
+        raise ValueError("--input-files and --input-file-manifest are mutually exclusive.")
+    if args.input_files is not None and not args.input_files:
+        raise ValueError("--input-files requires at least one file.")
+
+    if args.input_files is not None:
+        input_source = "explicit"
         files_by_sample = {args.sample_name: list(args.input_files)}
+    elif args.input_file_manifest:
+        input_source = "manifest"
+        print(f"Loading input file manifest {args.input_file_manifest}")
+        files_by_sample = load_efficiency_file_manifest(args.input_file_manifest, samples=samples_filter, max_files=run_cfg.max_files)
     else:
+        input_source = "xrootd_discovery"
         print(f"Discovering XRootD samples under {run_cfg.sample_root}")
         files_by_sample = discover_xrootd_sample_files(
             host=run_cfg.xrootd_host,
@@ -132,8 +147,11 @@ def main() -> None:
             "xrootd_host": run_cfg.xrootd_host,
             "sample_root": run_cfg.sample_root,
             "samples": list(files_by_sample),
+            "requested_samples": list(samples_filter or run_cfg.samples),
             "max_files": run_cfg.max_files,
             "min_plot_total": run_cfg.min_plot_total,
+            "input_source": input_source,
+            "input_file_manifest": str(args.input_file_manifest) if args.input_file_manifest else None,
             "offline_selection": offline_cfg.__dict__,
             "cms_plot_style": plot_style_cfg.__dict__,
         },

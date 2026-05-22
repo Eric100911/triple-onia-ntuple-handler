@@ -64,6 +64,26 @@ run-multileppat-efficiency \
   --output-dir /tmp/chiw/jjp_eff_smoke
 ```
 
+Reusable file manifests avoid repeated XRootD directory scans. The manifest is a JSON object whose keys are sample names and whose values are file URL lists:
+
+```json
+{
+  "JJP_DPS1": ["root://cceos.ihep.ac.cn///eos/ihep/cms/store/user/xcheng/MC_Production_v3/output/JJP_DPS1/0/output_ntuple.root"],
+  "JJP_SPS_G": ["root://cceos.ihep.ac.cn///eos/ihep/cms/store/user/xcheng/MC_Production_v3/output/JJP_SPS_G/0/output_ntuple.root"]
+}
+```
+
+```bash
+run-multileppat-efficiency \
+  --analysis-mode JpsiJpsiPhi \
+  --input-file-manifest jjp_efficiency_files.json \
+  --samples JJP_DPS1,JJP_SPS_G \
+  --max-files 10 \
+  --output-dir /tmp/chiw/jjp_efficiency_manifest_smoke
+```
+
+`run-multileppat-condor efficiency` accepts the same `--input-file-manifest` option. With a manifest, `--samples` filters the manifest keys when provided and `--max-files` limits files per sample.
+
 Useful plot metadata options:
 
 ```bash

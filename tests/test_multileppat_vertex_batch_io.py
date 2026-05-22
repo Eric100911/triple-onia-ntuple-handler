@@ -13,7 +13,16 @@ from multileppat_vertex_batch.cache import (
     stage_cache_matches,
     write_mass_selection_bundle,
 )
-from multileppat_vertex_batch.cli_condor import _write_dag, _write_submit_file, _write_worker_script, worker_efficiency_merge, worker_mass_merge
+from multileppat_vertex_batch.cli_condor import (
+    _build_efficiency_plan,
+    _write_dag,
+    _write_submit_file,
+    _write_worker_script,
+    build_parser as build_condor_parser,
+    worker_efficiency_merge,
+    worker_mass_merge,
+)
+from multileppat_vertex_batch.cli_efficiency import parse_args as parse_efficiency_args
 from multileppat_vertex_batch.config import OfflineSelectionConfig
 from multileppat_vertex_batch.efficiency import (
     EfficiencyBinning,
@@ -22,6 +31,7 @@ from multileppat_vertex_batch.efficiency import (
     build_event_efficiency_row,
     clopper_pearson_interval,
     find_jpsijpsiphi_gen_system,
+    load_efficiency_file_manifest,
 )
 from multileppat_vertex_batch.fit_iminuit import minuit_parameter_table
 from multileppat_vertex_batch.fit_roofit import (
@@ -63,6 +73,112 @@ class ResolveInputFilesTest(unittest.TestCase):
             missing = Path(tmp_dir) / "missing.root"
             with self.assertRaises(FileNotFoundError):
                 resolve_input_files([str(missing)])
+
+
+class EfficiencyFileManifestTest(unittest.TestCase):
+    def test_load_efficiency_file_manifest_filters_and_limits_samples(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="multileppat_manifest_", dir="/tmp/chiw") as tmp_dir:
+            manifest_path = Path(tmp_dir) / "files.json"
+            write_json(
+                {
+                    "JJP_DPS1": ["root://host//sample/a.root", "root://host//sample/b.root"],
+                    "JJP_SPS_G": ["root://host//sample/c.root"],
+                },
+                manifest_path,
+            )
+
+            files_by_sample = load_efficiency_file_manifest(manifest_path, samples=("JJP_DPS1",), max_files=1)
+
+            self.assertEqual(files_by_sample, {"JJP_DPS1": ["root://host//sample/a.root"]})
+
+    def test_load_efficiency_file_manifest_rejects_missing_requested_sample(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="multileppat_manifest_", dir="/tmp/chiw") as tmp_dir:
+            manifest_path = Path(tmp_dir) / "files.json"
+            write_json({"JJP_DPS1": ["root://host//sample/a.root"]}, manifest_path)
+
+            with self.assertRaisesRegex(ValueError, "JJP_SPS_G"):
+                load_efficiency_file_manifest(manifest_path, samples=("JJP_SPS_G",))
+
+    def test_load_efficiency_file_manifest_rejects_malformed_entries(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="multileppat_manifest_", dir="/tmp/chiw") as tmp_dir:
+            manifest_path = Path(tmp_dir) / "files.json"
+            write_json({"JJP_DPS1": ["root://host//sample/a.root", 3]}, manifest_path)
+
+            with self.assertRaisesRegex(ValueError, r"JJP_DPS1\[1\]"):
+                load_efficiency_file_manifest(manifest_path)
+
+    def test_condor_efficiency_plan_uses_manifest_without_discovery(self) -> None:
+        # MANUAL_FIX_MARKER: adjust this manifest sample block if the local
+        # test sample layout or expected Condor job naming needs more detail.
+        with tempfile.TemporaryDirectory(prefix="multileppat_condor_manifest_", dir="/tmp/chiw") as tmp_dir:
+            root = Path(tmp_dir)
+            manifest_path = root / "files.json"
+            write_json(
+                {
+                    "JJP_DPS1": ["root://host//JJP_DPS1/0/output_ntuple.root", "root://host//JJP_DPS1/1/output_ntuple.root"],
+                    "JJP_SPS_G": ["root://host//JJP_SPS_G/0/output_ntuple.root"],
+                },
+                manifest_path,
+            )
+            parser = build_condor_parser()
+            args = parser.parse_args(
+                [
+                    "efficiency",
+                    "--output-dir",
+                    str(root / "final"),
+                    "--condor-dir",
+                    str(root / "condor"),
+                    "--input-file-manifest",
+                    str(manifest_path),
+                    "--samples",
+                    "JJP_DPS1,JJP_SPS_G",
+                    "--max-files",
+                    "1",
+                ]
+            )
+
+            dag_path = _build_efficiency_plan(args, root / "condor", Path.cwd())
+
+            dag = dag_path.read_text(encoding="utf-8")
+            self.assertIn("JOB eff_JJP_DPS1_000000 multileppat.sub", dag)
+            self.assertIn("JOB eff_JJP_SPS_G_000000 multileppat.sub", dag)
+            merge_args = read_json(root / "condor" / "args" / "efficiency_merge.json")
+            self.assertEqual(
+                merge_args["files_by_sample"],
+                {
+                    "JJP_DPS1": ["root://host//JJP_DPS1/0/output_ntuple.root"],
+                    "JJP_SPS_G": ["root://host//JJP_SPS_G/0/output_ntuple.root"],
+                },
+            )
+            metadata = read_json(root / "final" / "run_metadata.json")
+            self.assertEqual(metadata["input_source"], "manifest")
+            self.assertEqual(metadata["input_file_manifest"], str(manifest_path))
+
+    def test_efficiency_parsers_accept_input_file_manifest(self) -> None:
+        condor_args = build_condor_parser().parse_args(
+            [
+                "efficiency",
+                "--output-dir",
+                "/tmp/chiw/out",
+                "--condor-dir",
+                "/tmp/chiw/work",
+                "--input-file-manifest",
+                "files.json",
+            ]
+        )
+        local_args = parse_efficiency_args(
+            [
+                "--output-dir",
+                "/tmp/chiw/out",
+                "--input-file-manifest",
+                "files.json",
+            ]
+        )
+
+        self.assertEqual(condor_args.input_file_manifest, "files.json")
+        self.assertIsNone(condor_args.samples)
+        self.assertEqual(local_args.input_file_manifest, "files.json")
+        self.assertIsNone(local_args.samples)
 
 
 class WriteRootTreesTest(unittest.TestCase):
