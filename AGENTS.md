@@ -83,4 +83,32 @@ xrdfs root://cceos.ihep.ac.cn// ls -d /eos/ihep/cms/store/user/xcheng/MC_Product
 ```
 
 ## Testing
-Run focused Python checks after code changes. At minimum, use syntax checks for touched modules and the relevant unit tests under `LCG 109a`. Smoke-test CLI changes with a tiny input or fixture when available, and keep temporary outputs under `/tmp/chiw`.
+Run focused Python checks after code changes under `LCG 109a`. Keep temporary outputs, Python bytecode, and plotting caches under `/tmp/chiw` so tests do not write into EOS/AFS package directories unnecessarily:
+```bash
+cd /eos/home-c/chiw/JpsiJpsiPhi/CMSSW_15_0_15_JpsiJpsiPhi_refactor/src/HeavyFlavorAnalysis/TPS-Onia2MuMu/test/multileppat_vertex_batch
+source /cvmfs/sft.cern.ch/lcg/views/LCG_109a/x86_64-el9-gcc13-opt/setup.sh
+export MPLCONFIGDIR=/tmp/chiw/mplconfig_multileppat_vertex_batch
+export PYTHONPYCACHEPREFIX=/tmp/chiw/pycache_multileppat_vertex_batch
+python -m pip install --no-deps -e .
+```
+
+At minimum, syntax-check touched modules and run the relevant tests:
+```bash
+python -m py_compile src/multileppat_vertex_batch/<touched_module>.py
+python tests/<test_file>.py
+```
+
+Prefer the direct test-file form for this nested package. The `tests/` directory is not a Python package, so invocations like `python -m unittest tests.test_multileppat_vertex_batch_io.CondorHelpersTest` can fail with `ModuleNotFoundError` even when the tests themselves are valid. To run one class or method, pass the unittest selector to the file directly:
+```bash
+python tests/test_multileppat_vertex_batch_io.py CondorHelpersTest
+python tests/test_multileppat_vertex_batch_io.py CondorHelpersTest.test_condor_dag_records_one_file_jobs_and_merge_dependency
+```
+
+For Condor workflow changes, inspect generated submit/DAG text in addition to unit tests. The submit file should keep per-job stdout/stderr but use one HTCondor event log per cluster:
+```text
+output = logs/$(job).out
+error = logs/$(job).err
+log = logs/$(Cluster).log
+```
+
+Smoke-test CLI changes with a tiny input, manifest, or fixture when available. Do not use `PYTHONPATH=src` to make tests import; use the editable install above instead, because `PYTHONPATH=src` can interfere with `LCG 109a` `site-packages` imports such as `pandas`.

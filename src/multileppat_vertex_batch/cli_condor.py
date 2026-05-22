@@ -100,11 +100,12 @@ python -m multileppat_vertex_batch.cli_condor "$@"
 def _write_submit_file(condor_dir: Path, worker_script: Path) -> Path:
     path = condor_dir / "multileppat.sub"
     text = f"""universe = vanilla
+initialdir = {condor_dir}
 executable = {worker_script}
 arguments = $(cmd) $(args_json)
 output = logs/$(job).out
 error = logs/$(job).err
-log = logs/$(job).log
+log = logs/$(Cluster).log
 request_cpus = 1
 request_memory = 4 GB
 should_transfer_files = NO
@@ -118,8 +119,9 @@ queue
 def _write_dag(condor_dir: Path, submit_file: Path, jobs: list[dict[str, str]], parents: list[tuple[list[str], str]]) -> Path:
     path = condor_dir / "workflow.dag"
     lines: list[str] = []
+    submit_path = submit_file.resolve()
     for job in jobs:
-        lines.append(f"JOB {job['job']} {submit_file.name}")
+        lines.append(f"JOB {job['job']} {submit_path}")
         lines.append(f"VARS {job['job']} job=\"{job['job']}\" cmd=\"{job['cmd']}\" args_json=\"{job['args_json']}\"")
     for parent_jobs, child in parents:
         if parent_jobs:

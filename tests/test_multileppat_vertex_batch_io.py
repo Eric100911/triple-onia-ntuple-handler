@@ -140,8 +140,8 @@ class EfficiencyFileManifestTest(unittest.TestCase):
             dag_path = _build_efficiency_plan(args, root / "condor", Path.cwd())
 
             dag = dag_path.read_text(encoding="utf-8")
-            self.assertIn("JOB eff_JJP_DPS1_000000 multileppat.sub", dag)
-            self.assertIn("JOB eff_JJP_SPS_G_000000 multileppat.sub", dag)
+            self.assertIn(f"JOB eff_JJP_DPS1_000000 {(root / 'condor' / 'multileppat.sub').resolve()}", dag)
+            self.assertIn(f"JOB eff_JJP_SPS_G_000000 {(root / 'condor' / 'multileppat.sub').resolve()}", dag)
             merge_args = read_json(root / "condor" / "args" / "efficiency_merge.json")
             self.assertEqual(
                 merge_args["files_by_sample"],
@@ -352,11 +352,17 @@ class CondorHelpersTest(unittest.TestCase):
             )
 
             dag = dag_path.read_text(encoding="utf-8")
-            self.assertIn("JOB mass_file_000000 multileppat.sub", dag)
+            self.assertIn(f"JOB mass_file_000000 {submit_file.resolve()}", dag)
             self.assertIn("cmd=\"worker-mass-file\"", dag)
             self.assertIn("PARENT mass_file_000000 mass_file_000001 CHILD mass_merge", dag)
             self.assertTrue(worker.exists())
-            self.assertIn("executable =", submit_file.read_text(encoding="utf-8"))
+            submit_text = submit_file.read_text(encoding="utf-8")
+            self.assertIn(f"initialdir = {condor_dir}", submit_text)
+            self.assertIn("executable =", submit_text)
+            self.assertIn("output = logs/$(job).out", submit_text)
+            self.assertIn("error = logs/$(job).err", submit_text)
+            self.assertIn("log = logs/$(Cluster).log", submit_text)
+            self.assertNotIn("log = logs/$(job).log", submit_text)
 
     def test_efficiency_merge_recomputes_counts_and_summary(self) -> None:
         with tempfile.TemporaryDirectory(prefix="multileppat_eff_merge_", dir="/tmp/chiw") as tmp_dir:
