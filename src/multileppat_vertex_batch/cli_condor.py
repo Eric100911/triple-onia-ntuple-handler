@@ -84,8 +84,16 @@ def _quote(value: str | Path) -> str:
 def _write_worker_script(condor_dir: Path, repo_dir: Path) -> Path:
     path = condor_dir / "worker.sh"
     text = f"""#!/usr/bin/env bash
-set -euo pipefail
+set -o pipefail
+set +e
+set +u
 source {_quote(LCG_SETUP)}
+setup_status=$?
+set -euo pipefail
+if [ "$setup_status" -ne 0 ]; then
+  echo "Failed to source LCG setup: {_quote(LCG_SETUP)}" >&2
+  exit "$setup_status"
+fi
 export MPLCONFIGDIR="${{MPLCONFIGDIR:-/tmp/chiw/mplconfig_multileppat_vertex_batch}}"
 export PYTHONPYCACHEPREFIX="${{PYTHONPYCACHEPREFIX:-/tmp/chiw/pycache_multileppat_vertex_batch}}"
 mkdir -p "$MPLCONFIGDIR" "$PYTHONPYCACHEPREFIX"
