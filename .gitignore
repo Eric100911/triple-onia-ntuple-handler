@@ -9,3 +9,4 @@ dist/
 *.json
 *.png
 *.root
+output_from_condor/

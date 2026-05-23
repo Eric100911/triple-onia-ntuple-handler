@@ -82,6 +82,9 @@ Prefer explicit input file lists. Quoted wildcard tokens are only a convenience 
 xrdfs root://cceos.ihep.ac.cn// ls -d /eos/ihep/cms/store/user/xcheng/MC_Production_v3/output/
 ```
 
+## Planning Style
+When asked for an implementation plan, make it decision-complete and include code snippets for crucial functionality. Plans should identify the intended files, interfaces, data flow, tests, and assumptions clearly enough that another engineer or agent can implement without choosing architecture details.
+
 ## Testing
 Run focused Python checks after code changes under `LCG 109a`. Keep temporary outputs, Python bytecode, and plotting caches under `/tmp/chiw` so tests do not write into EOS/AFS package directories unnecessarily:
 ```bash

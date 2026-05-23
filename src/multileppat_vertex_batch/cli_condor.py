@@ -6,6 +6,7 @@ import os
 import re
 import shlex
 import subprocess
+from importlib import resources
 from dataclasses import replace
 from pathlib import Path
 from typing import Any
@@ -58,6 +59,8 @@ from multileppat_vertex_batch.selection import (
 
 
 LCG_SETUP = "/cvmfs/sft.cern.ch/lcg/views/LCG_109a/x86_64-el9-gcc13-opt/setup.sh"
+DEFAULT_X509_USER_PROXY = "/afs/cern.ch/user/c/chiw/condor/x509up"
+TEMPLATE_PACKAGE = "multileppat_vertex_batch.templates.condor"
 
 
 def _parse_csv(raw: str) -> tuple[str, ...]:
@@ -81,25 +84,28 @@ def _quote(value: str | Path) -> str:
     return shlex.quote(str(value))
 
 
+def _render_template(template_name: str, values: dict[str, str | Path]) -> str:
+    text = resources.files(TEMPLATE_PACKAGE).joinpath(template_name).read_text(encoding="utf-8")
+    rendered = text
+    for key, value in values.items():
+        rendered = rendered.replace("{{ " + key + " }}", str(value))
+    unresolved = re.findall(r"{{\s*[^{}]+\s*}}", rendered)
+    if unresolved:
+        placeholders = ", ".join(sorted(set(unresolved)))
+        raise RuntimeError(f"Unresolved template placeholders in {template_name}: {placeholders}")
+    return rendered
+
+
 def _write_worker_script(condor_dir: Path, repo_dir: Path) -> Path:
     path = condor_dir / "worker.sh"
-    text = f"""#!/usr/bin/env bash
-set -o pipefail
-set +e
-set +u
-source {_quote(LCG_SETUP)}
-setup_status=$?
-set -euo pipefail
-if [ "$setup_status" -ne 0 ]; then
-  echo "Failed to source LCG setup: {_quote(LCG_SETUP)}" >&2
-  exit "$setup_status"
-fi
-export MPLCONFIGDIR="${{MPLCONFIGDIR:-/tmp/chiw/mplconfig_multileppat_vertex_batch}}"
-export PYTHONPYCACHEPREFIX="${{PYTHONPYCACHEPREFIX:-/tmp/chiw/pycache_multileppat_vertex_batch}}"
-mkdir -p "$MPLCONFIGDIR" "$PYTHONPYCACHEPREFIX"
-cd {_quote(repo_dir)}
-python -m multileppat_vertex_batch.cli_condor "$@"
-"""
+    text = _render_template(
+        "worker.sh.tmpl",
+        {
+            "lcg_setup": _quote(LCG_SETUP),
+            "repo_dir": _quote(repo_dir),
+            "x509_user_proxy": _quote(DEFAULT_X509_USER_PROXY),
+        },
+    )
     path.write_text(text, encoding="utf-8")
     path.chmod(0o755)
     return path
@@ -107,19 +113,14 @@ python -m multileppat_vertex_batch.cli_condor "$@"
 
 def _write_submit_file(condor_dir: Path, worker_script: Path) -> Path:
     path = condor_dir / "multileppat.sub"
-    text = f"""universe = vanilla
-initialdir = {condor_dir}
-executable = {worker_script}
-arguments = $(cmd) $(args_json)
-output = logs/$(job).out
-error = logs/$(job).err
-log = logs/$(Cluster).log
-request_cpus = 1
-request_memory = 4 GB
-should_transfer_files = NO
-getenv = True
-queue
-"""
+    text = _render_template(
+        "multileppat.sub.tmpl",
+        {
+            "condor_dir": condor_dir,
+            "worker_script": worker_script,
+            "x509_user_proxy": DEFAULT_X509_USER_PROXY,
+        },
+    )
     path.write_text(text, encoding="utf-8")
     return path
 

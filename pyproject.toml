@@ -28,5 +28,8 @@ run-multileppat-condor = "multileppat_vertex_batch.cli_condor:main"
 [tool.setuptools]
 package-dir = {"" = "src"}
 
+[tool.setuptools.package-data]
+multileppat_vertex_batch = ["templates/condor/*.tmpl"]
+
 [tool.setuptools.packages.find]
 where = ["src"]
