@@ -63,6 +63,7 @@ DEFAULT_X509_USER_PROXY = "/afs/cern.ch/user/c/chiw/condor/x509up"
 TEMPLATE_PACKAGE = "multileppat_vertex_batch.templates.condor"
 
 
+
 def _parse_csv(raw: str) -> tuple[str, ...]:
     return tuple(item.strip() for item in raw.split(",") if item.strip())
 
