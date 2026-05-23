@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+set -o pipefail
+set +e
+set +u
+source {{ lcg_setup }}
+setup_status=$?
+set -euo pipefail
+if [ "$setup_status" -ne 0 ]; then
+  echo "Failed to source LCG setup: {{ lcg_setup }}" >&2
+  exit "$setup_status"
+fi
+
+if [ -z "${X509_USER_PROXY:-}" ]; then
+  export X509_USER_PROXY={{ x509_user_proxy }}
+fi
+
+export MPLCONFIGDIR="${MPLCONFIGDIR:-/tmp/chiw/mplconfig_multileppat_vertex_batch}"
+export PYTHONPYCACHEPREFIX="${PYTHONPYCACHEPREFIX:-/tmp/chiw/pycache_multileppat_vertex_batch}"
+mkdir -p "$MPLCONFIGDIR" "$PYTHONPYCACHEPREFIX"
+
+cd {{ repo_dir }}
+python -m multileppat_vertex_batch.cli_condor "$@"

@@ -1,0 +1,13 @@
+universe = vanilla
+initialdir = {{ condor_dir }}
+executable = {{ worker_script }}
+arguments = $(cmd) $(args_json)
+output = logs/$(job).out
+error = logs/$(job).err
+log = logs/$(Cluster).log
+request_cpus = 1
+request_memory = 4 GB
+should_transfer_files = NO
+getenv = True
+x509userproxy = {{ x509_user_proxy }}
+queue

@@ -15,6 +15,7 @@ from multileppat_vertex_batch.cache import (
 )
 from multileppat_vertex_batch.cli_condor import (
     _build_efficiency_plan,
+    _render_template,
     _write_dag,
     _write_submit_file,
     _write_worker_script,
@@ -357,17 +358,25 @@ class CondorHelpersTest(unittest.TestCase):
             self.assertIn("PARENT mass_file_000000 mass_file_000001 CHILD mass_merge", dag)
             self.assertTrue(worker.exists())
             worker_text = worker.read_text(encoding="utf-8")
+            submit_text = submit_file.read_text(encoding="utf-8")
+            self.assertNotIn("{{", worker_text)
+            self.assertNotIn("{{", submit_text)
             self.assertNotIn("set -euo pipefail\nsource ", worker_text)
             self.assertIn("set -o pipefail\nset +e\nset +u\nsource ", worker_text)
             self.assertIn("setup_status=", worker_text)
-            self.assertIn("set -euo pipefail\nif [ \"$setup_status\" -ne 0 ]; then", worker_text)
-            submit_text = submit_file.read_text(encoding="utf-8")
+            self.assertIn('set -euo pipefail\nif [ "$setup_status" -ne 0 ]; then', worker_text)
+            self.assertIn("export X509_USER_PROXY=/afs/cern.ch/user/c/chiw/condor/x509up", worker_text)
             self.assertIn(f"initialdir = {condor_dir}", submit_text)
             self.assertIn("executable =", submit_text)
             self.assertIn("output = logs/$(job).out", submit_text)
             self.assertIn("error = logs/$(job).err", submit_text)
             self.assertIn("log = logs/$(Cluster).log", submit_text)
             self.assertNotIn("log = logs/$(job).log", submit_text)
+            self.assertIn("x509userproxy = /afs/cern.ch/user/c/chiw/condor/x509up", submit_text)
+
+    def test_template_renderer_rejects_unresolved_placeholders(self) -> None:
+        with self.assertRaisesRegex(RuntimeError, "Unresolved template placeholders"):
+            _render_template("worker.sh.tmpl", {})
 
     def test_efficiency_merge_recomputes_counts_and_summary(self) -> None:
         with tempfile.TemporaryDirectory(prefix="multileppat_eff_merge_", dir="/tmp/chiw") as tmp_dir:
